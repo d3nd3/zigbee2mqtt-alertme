@@ -23,3 +23,9 @@ serial:
 
 external_converters:
   - spg900.js
+
+advanced:
+  # should bridge cache state? zigbee2mqtt-frontend uses a cache regardless of this setting.
+  cache_state: false
+  # persist across restarts in data/state.json
+  cache_state_persistent: true

@@ -25,13 +25,55 @@ const profileID = 0xC216;
 //normal mode gives power consumption redings.
 const modes = ["normal","range_test","locked","seeking","idle","dormant"];
 
-const HNF = 1;
-const MODE_NORMAL = 0;
-const MODE_RANGETEST = 1;
+
+/*
+Initial Mode after pairing is Dormant Mode.
+When re-inserted into plug socket, receives 1x Range Test 0xFD (rssi, lqi)
+Timers are reset when power is lost.
+uptimeMillisec timer in heartbeat is slightly fast/inaccurate/gains time
+uptimeSec timer more reliable in power consumption report
+HNF 2 == Unpair. I assume they just set HNF 1 with dormant mode, to make paired in driver.
+*/
+//sends powerDemand every 10 seconds
+//HeartBeat every 30 seconds
+//powerComption every minute
+const MODE_NORMAL = 0; 
+//sends rangeTest every second.
+const MODE_RANGETEST = 1; 
+//LockDevice, becomes unusable? Emergency?
 const MODE_LOCKED = 2;
+//sends rangeTest every 30 seconds. - guessing this enters pairing mode if hub disconnects?
 const MODE_SEEKING = 3;
-const MODE_IDLE = 4;
-const MODE_DORMANT = 5;
+//sends rangeTest every 30 seconds. 
+const MODE_IDLE = 4; 
+//sends heartBeat every 30 seconds. This is the initial mode after pairing.
+const MODE_DORMANT = 5; 
+
+/*
+"RECV_HEARTBEAT": {
+        "lqi": 255, //always 255? doesn't work?
+        "msTimer": 975136,
+        "psuVoltage": 4731,
+        "rssi": -44,
+        "statusFlags": 31,
+        "switchMask": 1,
+        "switchState": 0,
+        "temperature": 476
+    },
+    HAS_VOLTAGE = 1
+    HAS_TEMPERATURE = 2
+    HAS_SWITCH_STATE = 4
+    HAS_LQI = 8
+    HAS_RSSI = 16
+*/
+
+/*
+"RANGE_TEST": {
+        "lqi": 255,
+        "rssi": -44
+    },
+*/
+//possible that HomeNetworkFlag can be cleared with value 2.
 
 const REMOTE_TRUE = 1;
 const REMOTE_FALSE = 0;
@@ -72,7 +114,7 @@ meta = {device: data.device, logger, state: this.state.get(data.device.ieeeAddr)
     Clusters which have more than one command, must have unique fields to identify them.
 */
 const fzLocal = {
-    //alertmeSwitchState
+    //==CLUSTER SWITCH==
     alertmeSwitchState_fz: {
         cluster: 'alertmeSwitchState',
         type: 'commandNotification',
@@ -85,19 +127,33 @@ const fzLocal = {
             };
         }
     },
-    //alertmePowerUsage
+    //==CLUSTER POWER USAGE==
     alertmePowerUsageReport_fz: {
         cluster: 'alertmePowerUsage',
         type: 'commandNotification',
         convert: (model, msg, publish, options, meta) => {
-            if ( msg.data.hasOwnProperty('powerDemand') ) {
+            if ( msg.data.hasOwnProperty('watts') ) {
                 //powerDemandReport
+                /*
+                    "POWER_DEMAND_REPORT": {
+                            "watts": 0
+                    },
+                */
                 return {
                     //each key in this object will exist in root tree json
                     "POWER_DEMAND_REPORT": msg.data
                 };
             } else if ( msg.data.hasOwnProperty('powerConsumption') ) {
                 //powerConsumptionReport
+                /*
+                    "POWER_CONSUMPTION_REPORT": {
+                        "powerConsumption": 0,
+                        "wasFirst": 0,
+                        "uptimeSecs": 7630
+                    },
+
+                    assumption: uptime in seconds since paired.
+                */
                 return {
                     //each key in this object will exist in root tree json
                     "POWER_CONSUMPTION_REPORT": msg.data
@@ -112,19 +168,40 @@ const fzLocal = {
             
         }
     },
-    //alertmeJoin
+    //==CLUSTER JOIN==
     alertmeJoin_fz: {
         cluster: 'alertmeJoin',
         type: 'commandNotification',
         convert: (model, msg, publish, options, meta) => {
             if ( msg.data.hasOwnProperty('nodeId') ) {
                 //respHello
+                /*
+                    "RESP_HELLO": {
+                        "appRelease": 0,
+                        "appVersion": 41,
+                        "dateCode": "2013-09-26",
+                        "deviceType": 7,
+                        "eui64": "--SMARTPLUG_IEEE_ADDR--",
+                        "hwMajorVersion": 1,
+                        "hwMinorVersion": 0,
+                        "mfg": "AlertMe.com",
+                        "mfgId": 4153,
+                        "model": "SmartPlug",
+                        "nodeId": 24675
+                    }
+                */
                 return {
                     //each key in this object will exist in root tree json
                     "RESP_HELLO": msg.data
                 };
             } else if ( msg.data.hasOwnProperty('rssi') ) {
                 //rangeTest
+                /*
+                    "RANGE_TEST": {
+                        "lqi": 119,
+                        "rssi": -44
+                    },
+                */
                 return {
                     //each key in this object will exist in root tree json
                     "RANGE_TEST": msg.data
@@ -132,37 +209,102 @@ const fzLocal = {
             }
         }
     },
-    //alertmeDeviceGeneral
+    //==CLUSTER GENERAL==
     alertmeDeviceGeneral_fz: {
         cluster: 'alertmeDeviceGeneral',
         type: 'commandNotification',
         convert: (model, msg, publish, options, meta) => {
             if ( msg.data.hasOwnProperty('manufId') ) {
-                //FaultReport
+                //================FaultReport====================
+                const faults = [
+                    "FAULT_NOFAULT",
+                    "FAULT_EMBER_STACK_STARTUP",
+                    "FAULT_WRONG_HARDWARE",
+                    "FAULT_WRONG_HARDWARE_REVISION",
+                    "FAULT_TOKEN_AREA_INVALID",
+                    "FAULT_NO_BOOTLOADER",
+                    "FAULT_NO_SERIAL_OUTPUT",
+                    "FAULT_EMBER_MFGLIB_STARTUP",
+                    "FAULT_FLASH_FAILED" ,
+                    "FAULT_MCP23008_FAILED",
+                    "FAULT_VERY_LOW_BATTERY",
+                    "FAULT_FAILED_TO_FORM_NETWORK",
+                    "FAULT_CHILD_DEVICE_LOST"
+                ]
+
+                let fault = msg.data.faultId;
+  
+                if ( fault >= faults.indexOf("FAULT_NOFAULT") && fault <= faults.indexOf("FAULT_CHILD_DEVICE_LOST") )
+                    msg.data.faultId = faults[fault]
+
                 return {
-                    //each key in this object will exist in root tree json
-                    "FAULT_REPORT": msg.data
-                };
+                        //each key in this object will exist in root tree json
+                        "FAULT_REPORT": msg.data
+                    };
+                
             } else if ( msg.data.hasOwnProperty('statusFlags') ) {
-                //recvHeartbeat
+                //================HeartBeat====================
+                /*
+                "RECV_HEARTBEAT": {
+                        "lqi": 255, //always 255? doesn't work?
+                        "uptimeMilliSecs": 975136,
+                        "psuVoltage": 4731,
+                        "rssi": -44,
+                        "statusFlags": 31,
+                        "switchMask": 1,
+                        "switchState": 0,
+                        "temperature": 476,
+                        "tampered": 0
+                    },
+                    HAS_VOLTAGE = 1
+                    HAS_TEMPERATURE = 2
+                    HAS_SWITCH_STATE = 4
+                    HAS_LQI = 8
+                    HAS_RSSI = 16
+
+                    MASK_TAMPER = 2
+                    MASK_SENSOR = 1
+
+                    STATE_TAMPER = 2
+                    STATE_SENSOR = 1
+
+                    assumption: uptime in milliseconds since powered.
+                */
+                
+                let hasVoltage = msg.data.statusFlags & 1 ? true : false;
+                let hasTemp = msg.data.statusFlags & 2 ? true : false;
+                let hasState = msg.data.statusFlags & 4 ? true : false;
+                let hasLqi = msg.data.statusFlags & 8 ? true : false;
+                let hasRssi = msg.data.statusFlags & 16 ? true : false;
+                let RECV_HEARTBEAT = {};
+
+                if ( hasVoltage ) RECV_HEARTBEAT["psuVoltage"] = msg.data.psuVoltage;
+                if ( hasTemp ) RECV_HEARTBEAT["temperature"] = msg.data.temperature;
+                if ( hasState ) RECV_HEARTBEAT["switchState"] = msg.data.switchState;
+                if ( hasLqi ) RECV_HEARTBEAT["lqi"] = msg.data.lqi;
+                if ( hasRssi ) RECV_HEARTBEAT["rssi"] = msg.data.rssi;
+                if ( msg.data.switchMask & 1 ) RECV_HEARTBEAT["switchState"] = msg.data.switchState & 1;
+                if ( msg.data.switchMask & 2 ) RECV_HEARTBEAT["tampered"] = msg.data.switchState & 2;
+                RECV_HEARTBEAT["uptimeMilliSecs"] = msg.data.uptimeMilliSecs;
+                
                 return {
                     //each key in this object will exist in root tree json
-                    "RECV_HEARTBEAT": msg.data
+                    "RECV_HEARTBEAT": RECV_HEARTBEAT
                 };
             } else if ( msg.data.hasOwnProperty('year') ) {
-                //getRTC
+                //================GetRtc====================
                 return {
                     //each key in this object will exist in root tree json
                     "GET_RTC": msg.data
                 };
             } else if ( msg.data.hasOwnProperty('command') ) {
-                //GeneralCommand
+                //================GeneralCommand====================
                 return {
                     //each key in this object will exist in root tree json
                     "GENERAL_COMMAND": msg.data
                 };
             } else if ( msg.data.hasOwnProperty('msg') ) {
-                //stdOut
+                //================StdOut====================
                 return {
                     //each key in this object will exist in root tree json
                     "STD_OUT": msg.data
@@ -177,32 +319,38 @@ const fzLocal = {
 
     key matches the exposes "property" kv.
 */
-//alertmeSwitchState
+//==CLUSTER SWITCH_CONTROL==
 const toZigbeeSwitchState = {
     RemoteMode: {
-        //setRemoteMode
+        //================switchButtonPermission (LED auto turns off over-time.) ====================
+        //Can the physical switchButton be controlled remotely?
         key: ['RemoteMode'],
         convertSet: async (entity, key, value, meta) => {
             await entity.command("alertmeSwitchState","setRemoteMode",
                 {
-                    mode: value.includes("Local") == -1 ? REMOTE_FALSE : REMOTE_TRUE
+                    mode: value.includes("Local") ? REMOTE_FALSE : REMOTE_TRUE
                 },
                 alertmeOptions);
         },
     },
     SwitchState: {
-        //setSwitchState
+        //================setSwitchState================
         key: ['state'],
         convertSet: async (entity, key, value, meta) => {
+            /*
+                tamper_switch = 2
+                relay_switch = 1
+            */
             let convVal = value == "ON" ? 1 : 0;
             await entity.command("alertmeSwitchState","setSwitchState",
                 {
                     state: convVal,
-                    home_network_flag: HNF
+                    relay_mask: 1
+
                 },
                 alertmeOptions);
         },
-        //reqSwitchStatus
+        //================reqSwitchStatus================ (stateResponse is triggered on switchState too.)
         convertGet: async (entity, key, meta) => {
             await entity.command("alertmeSwitchState","reqSwitchStatus",
                 {
@@ -212,9 +360,9 @@ const toZigbeeSwitchState = {
     }
 }
 
-//alertmePowerUsage - none.
+//==CLUSTER POWER USAGE== - Nothing to send, only receive data. (Check advanced ame-power.irp files for more detail.)
 
-//alertmeDeviceGeneral
+//==CLUSTER DEVICE GENERAL==
 const toZigbeeDeviceGeneral = {
     RTC: {
         key: ['RTC'],
@@ -251,14 +399,39 @@ const toZigbeeDeviceGeneral = {
             await entity.command("alertmeDeviceGeneral","setOperatingMode",
                 {
                     mode: convVal,
-                    home_network_flag: HNF
+                    home_network_flag: 0
                 },
                 alertmeOptions);
         }
     },
+    //set to NormalMode with HNF set.
+    HomeNetworkFlag: {
+        key: ['HomeNetworkFlag'],
+        convertSet: async (entity, key, value, meta) => {
+            await entity.command("alertmeDeviceGeneral","setOperatingMode",
+                {
+                    mode: MODE_NORMAL,
+                    home_network_flag: 1
+                },
+                alertmeOptions);
+        }
+    },
+    UnpairPlug: {
+        key: ['ClearNetworkFlag'],
+        convertSet: async (entity, key, value, meta) => {
+            await entity.command("alertmeDeviceGeneral","setOperatingMode",
+                {
+                    mode: MODE_NORMAL,
+                    home_network_flag: 2
+                },
+                alertmeOptions);
+        }
+    },
+    //Some claim this decreases heartbeat interval, but has no effect on my switch.
     DecreasePolling: {
         key: ['DecreasePolling'],
-        convertSet: async (entity, key, value, meta) => {   
+        convertSet: async (entity, key, value, meta) => {
+            let copyObject = { ...alertmeOptions , disableDefaultResponse: false };
             await entity.command("alertmeDeviceGeneral","decreasePolling",
                 {
                 },
@@ -267,8 +440,9 @@ const toZigbeeDeviceGeneral = {
     }
 };
 
+//==CLUSTER JOIN==
 const toZigbeeJoin = {
-    //alertmeJoin
+    
     ReqHello: {
         key: ['ReqHello'],
         convertSet: async (entity, key, value, meta) => {
@@ -282,8 +456,6 @@ const toZigbeeJoin = {
 };
 
 
-let toggleme = 0;
-
 function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -294,7 +466,19 @@ async function asyncWait(time) {
 }
 
 const definition = {
-    fingerprint: [{'ieeeAddr': "0x000d6f000416c4fc"}],
+    //Put your smartplug ieeeaddr here to match it for loading this definition.
+    //fingerprint: [{'ieeeAddr': "0x000d6f000416c4fc"}],
+    fingerprint: [
+        { 
+            type: 'Router',
+            manufId: 43981,
+            endpoints: [
+                //switch(238),power(239),general(240),led(241),tamper(242),button(243)
+                {ID: 2, profileID: 49686, deviceID: 7, inputClusters: [240,243,241,239,238], outputClusters: []},
+                {ID: 240, profileID: 49686, deviceID: 7, inputClusters: [2942,2943], outputClusters: []}
+            ]
+        }
+    ],
     model: 'SPG900',
     description: 'Alertme Smart plug (with power monitoring)',
     vendor: 'Alertme/IrisV1',
@@ -314,6 +498,8 @@ const definition = {
         toZigbeeDeviceGeneral.RTC,
         toZigbeeDeviceGeneral.OperatingMode,
         toZigbeeDeviceGeneral.DecreasePolling,
+        toZigbeeDeviceGeneral.HomeNetworkFlag,
+        toZigbeeDeviceGeneral.UnpairPlug,
 
         toZigbeeJoin.ReqHello
     ],
@@ -349,22 +535,36 @@ const definition = {
         e.enum("OperatingMode",ea.STATE_SET,modes), 
         e.enum("DecreasePolling",ea.STATE_SET,["DECREASE POLLING"]),
 
+        /*
+        {   
+            this.type = 'enum';
+            this.name = "UNPAIR";
+            this.property = "ClearNetworkFlag";
+            this.access = ea.STATE_SET;
+            this.values = ["UNPAIR"];
+        }
+        */
+        e.enum("HomeNetworkFlag",ea.STATE_SET,["SET HOME NETWORK"]),
+        e.enum("ClearNetworkFlag",ea.STATE_SET,["CLEAR HOME NETWORK"]),
+
         e.enum("ReqHello",ea.STATE_SET,["GET HELLO"]),
 
     ],
-    //I think the below is for storing extra specific vendor/device information to customize cluster behaviour slightly.
+
     /*
-    onEvent: async (type, data, device) => {
-        if (type === 'message') {
-            if ( data.cluster == 'alertmePowerUsage' ) {
-                data.endpoint.saveClusterAttributeKeyValue('alertmePowerUsage', {uptime: data.data['uptime']});
-            }
-        }
-    },*/ 
+        Initial Mode after pairing is Dormant Mode.
+        When re-inserted into plug socket, receives 1x Range Test 0xFD (rssi, lqi)
+        Timers are reset when power is lost.
+        uptimeMillisec timer in heartbeat is slightly fast/inaccurate/gains time
+        uptimeSec timer more reliable in power consumption report
+        HNF 2 == Unpair. I assume they just set HNF 1 with dormant mode, to make paired in driver.
+    */
     configure: async (device, coordinatorEndpoint, logger) => {    
         const targEndpoint = device.getEndpoint(2);
         //use source endpoint 2. they like it.
         ameProfEndpoint = coordinatorEndpoint.getDevice().getEndpoint(2);
+
+        //Binding optional?
 
         // await targEndpoint.bind("alertmeJoin",ameProfEndpoint);
         // await targEndpoint.bind("alertmeDeviceGeneral",ameProfEndpoint);
@@ -374,6 +574,8 @@ const definition = {
         //await targEndpoint.bind("alertmeTamper",ameProfEndpoint);
 
 
+        //Turn remote LED back on periodically.
+        /*
         let remoteMode = async () => {
             //Orange light like?
             await targEndpoint.command("alertmeSwitchState","setRemoteMode",
@@ -383,12 +585,12 @@ const definition = {
                 alertmeOptions);
         }
         
-        //remoteMode();
-        //clearInterval(remoteInterval);
-        //remoteInterval = setInterval( remoteMode , 60000*remoteModeFrequency);
-
+        remoteMode();
+        clearInterval(remoteInterval);
+        //in minutes
+        remoteInterval = setInterval( remoteMode , 60000*remoteModeFrequency);
+        */
         device.save();
-
     },
 };
 
