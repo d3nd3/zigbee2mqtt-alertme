@@ -279,7 +279,7 @@ const fzLocal = {
                 let RECV_HEARTBEAT = {};
 
                 if ( hasVoltage ) RECV_HEARTBEAT["psuVoltage"] = msg.data.psuVoltage;
-                if ( hasTemp ) RECV_HEARTBEAT["temperature"] = msg.data.temperature;
+                if ( hasTemp ) RECV_HEARTBEAT["temperature"] = msg.data.temperature/25+1.9;
                 if ( hasState ) RECV_HEARTBEAT["switchState"] = msg.data.switchState;
                 if ( hasLqi ) RECV_HEARTBEAT["lqi"] = msg.data.lqi;
                 if ( hasRssi ) RECV_HEARTBEAT["rssi"] = msg.data.rssi;
