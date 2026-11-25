@@ -1,0 +1,51 @@
+# zigbee2mqtt-alertme — zigbee2mqtt 1.33.2 that knows about an AlertMe SPG900 plug
+# Thin fork diagram: upstream does the work, the `alertme` branch is the delta.
+# Strokes only (no fills) so the light and dark diagram themes both stay readable.
+direction: right
+grid-columns: 2
+grid-rows: 2
+
+classes: {
+  entry: {style: {stroke: "#4f9cf9"; stroke-width: 2}}
+  core: {style: {stroke: "#9a7cf9"}}
+  state: {style: {stroke: "#e0a44a"}}
+  store: {style: {stroke: "#e0a44a"; stroke-width: 2}}
+  ext: {style: {stroke: "#6ac48a"; stroke-dash: 4}}
+}
+
+entry: Entry points {
+  direction: down
+  cli: "cli.js and index.js · upstream entry, untouched by the fork" {class: entry}
+  branch: "branch alertme · five commits ahead of master, which stays at 1.33.2" {class: entry}
+  config: "data/configuration.yaml · frontend true, spg900.js listed as an external converter" {class: entry}
+}
+
+external: External {
+  direction: down
+  upstream: "Koenkk/zigbee2mqtt · 1.33.2, the base this fork tracks" {class: ext}
+  herdsman: "zigbee-herdsman-alertme · package.json depends on the git URL, branch alertme" {class: ext}
+  broker: "MQTT broker · every device state and command goes through it" {class: ext}
+  ha: "Home Assistant · discovery is switched off in this config" {class: ext}
+}
+
+core: Core {
+  direction: down
+  converter: "data/spg900.js · 597-line external converter, the whole point of the fork" {class: core}
+  from: "fromZigbee · alertmeSwitchState, alertmePowerUsage, alertmeJoin, alertmeDeviceGeneral" {class: core}
+  to: "toZigbee · state on or off becomes setSwitchState with the relay mask" {class: core}
+  modes: "six radio modes · normal, range test, locked, seeking, idle, dormant" {class: core}
+  finger: "fingerprint · matches the plug before the generic converters get a look" {class: core}
+  stack: "src/ · upstream coordinator, MQTT and frontend code, no other edits" {class: core}
+}
+
+state: State {
+  direction: down
+  cache: "data/state.json · cache_state false but persistent true, so state survives restarts" {class: store; shape: cylinder}
+  database: "data/database.db · coordinator and device pairing, upstream behaviour" {class: store; shape: cylinder}
+  yaml: "configuration.yaml · edited in the repo, so a deploy has to keep or re-apply it" {class: state}
+  herm: "package-lock.json · two lines changed, the herdsman git reference" {class: store; shape: cylinder}
+}
+
+entry -> core
+core -> state
+core -> external
